@@ -1,7 +1,9 @@
-# Priority-effects
-Code and documents associated with https://doi.org/10.1098/rspb.2020.2753
+# Priority effects alter interaction outcomes in a legume–rhizobium mutualism
+Code and documents associated with "Priority effects alter interaction outcomes in a legume–rhizobium mutualism".
+Cite this article: Boyle JA, Simonsen AK, Frederickson ME, Stinchcombe JR. 2021. Priority effects alter interaction outcomes in a legume–rhizobium mutualism. Proc. R. Soc. B. 288: 20202753. https://doi.org/10.1098/rspb.2020.2753
 
-## Citation
+## Dryad Citation
+Our data and code is also on Dryad. Citation and link is found below:
 Boyle, Julia; Simonsen, Anna; Frederickson, Megan; Stinchcombe, John (2021), Priority effects alter interaction outcomes in a legume-rhizobium mutualism, Dryad, Dataset, https://doi.org/10.5061/dryad.8w9ghx3kz
 
 ## Abstract
