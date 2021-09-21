@@ -1,0 +1,363 @@
+---
+title: "Priority effects alter interaction outcomes in a legume-rhizobium mutualism"
+author: "Julia Boyle"
+date: "14/10/2020"
+output: html_document
+---
+# The set up
+```{r}
+#Packages required:
+library(plyr)
+library(tidyverse)
+library(car)
+library(lme4)
+library(lmerTest)
+library(cowplot)
+library(emmeans)
+library(nlme)
+library(lsmeans)
+
+#Creating neccessary dataframes:
+
+d<-read.csv('MedicagoJULY.csv')
+d$T1_strain= relevel(d$T1_strain, ref="N")
+d$T2_strain= relevel(d$T2_strain, ref="N")
+
+d3<-d %>% 
+   filter(ExtraNN==0)  #excludes those with biased death prior to any inoculation treatments, most important for mortality tests. The plants excluded by making this data frame are equivalent to 'NN' treatment/control-control treatment. There were 10 extra control-control plants that were allocated to ExtraNN, fewer than 10 survived until the end of the experiment. The inclusion or exclusion of these plants did not change any major results.
+d3$T1_strain= relevel(d3$T1_strain, ref="N")
+d3$T2_strain= relevel(d3$T2_strain, ref="N")
+
+d2<-d3 %>% 
+  mutate(log1pTotal_nod= log1p(Total_nod_num)) #this makes the total nodule distribution normal for later  
+d2$T1_strain= relevel(d2$T1_strain, ref="N")
+d2$T2_strain= relevel(d2$T2_strain, ref="N")
+
+
+d4<-d3 %>% 
+   filter(Dead1==0)  #excluding plants that died early (before first survey) to help normalize leaf count data
+d4$T1_strain= relevel(d4$T1_strain, ref="N")
+d4$T2_strain= relevel(d4$T2_strain, ref="N")
+
+d5<-d3 %>% 
+  mutate(Leaves_herb= (Leaf4-Leaf4attached)) #Adds a column for number of leaves missing
+
+LeafTime<-read.csv('LeafTime.csv') #mean and SE grouped by treatment for leaf number over time
+
+options(contrasts = c("contr.sum", "contr.poly"))
+```
+
+# Key
+
+## Timeline:
+- Germinated seeds planted in pots May 23rd, 2019 
+- First inoculation was June 6th (14 days after germination)
+- Pots transplanted outside June 7th 
+- Survey day 1 was June 17th (25 days after germination)
+- Second inoculation was June 20th (28 days after germination)
+- Survey day 2 was June 25th	(33 days after germination)
+- Survey day 3 was July 7th	(45 days after germination)
+- Survey day 4/harvest day was July 22nd	(60 days after germination)
+
+## Header meanings
+```{r}
+head(d3) #What the data sheet looks like
+```
+
+- Plant ID is a unique number assigned to each plant
+- 'Leaf' columns count the absolute number of leaves created by the plant at each survey timepoint, even if they've been herbivorized later
+- 'Dead' columns: 0=alive, 1=dead	
+- ExtraNN: These plants were not included in the analyses. Ten extras (NN treatment) that I was going to pull up. In this case, I allocated non-germinated plants (pre-bacterial treatments) into these 10 extras so these should be excluded from death stats due to bias. If the plant survived, the nodule number was still recorded. If any plant died, nodule number was almost always NA because of non-existent roots.
+- Pink_nod_num: number of nodules that were pink	
+- White nod num: number of nodules that were white	
+- Total nod num: total number of nodules on the plant. Marked NA if plant died and had absent roots. Rarely, dead plants still had intact roots with visible nodules.
+- Proportion pink: Pink_nod_num/Total_nod_num
+- Above ground biomass (g): the above biomass that was still attached to the stem and roots at time of collection. This does not always correspond to number of leaves which was number of ABSOLUTE leaves the plant produced. AGB may be missing/decreased due to herbivory and not treatment related.	
+
+* Treatment: 
+  + G= Ensifer meliloti 1022 (Good nitrogen fixing rhizobia)
+  + B= Ensifer T173 (Bad nitrogen fixer)
+  + N= blank inoculation (No rhizobia) 
+
+# Examining any block effects
+```{r}
+table(d3$Block, d3$Dead4)#there were 132 plants in block one, 134 in block two. This is because of some seed germination mortality
+chisq.test(d3$Block, d3$Dead4)
+#Block did not have a significant effect on mortality, above biomass (not shown), or final leaf number (not shown)
+
+d3 %>% 
+  group_by(Treatment, Block) %>% 
+  count(Treatment) #Treatments pretty equally represented between blocks
+```
+
+# Looking at death:models
+```{r}
+table(d3$Treatment, d3$Dead4)
+table(d3$T1_strain, d3$Dead4)
+chisq.test(d3$T1_strain, d3$Dead4) #significant
+chisq.test(d3$T2_strain, d3$Dead4) #not significant
+```
+
+# Looking at total number of nodules and treatment
+Models
+```{r}
+hist(d3$Total_nod_num)
+hist(log(d3$Total_nod_num)) #looks normal now
+
+NODNUM <- ddply(d3, c("Treatment"), summarise,
+               N    = sum(!is.na(Total_nod_num)),
+               mean = mean(Total_nod_num, na.rm=TRUE),
+               sd   = sd(Total_nod_num, na.rm=TRUE),
+               se   = sd / sqrt(N))
+NODNUM
+
+model0<-lm(log1pTotal_nod~T1_strain*T2_strain, data=d2) #using d2 as data because it has the logged values
+summary(model0)
+Anova(model0, type=3) #significant, getting bacterial treatments increases nodule number compared to getting nothing.
+plot(model0)
+
+print(lsmeans(model0.0, list(pairwise ~ T1_strain | T2_strain), type="unlink")) #this gives me predicted means and SE from the model
+
+emm1 = emmeans(model0, specs = ~ T1_strain & T2_strain)
+emm1
+GBnod<-c(0,0,0,0,0,1,0,0,0)
+BGnod<-c(0,0,0,0,0,0,0,1,0)
+contrast(emm1, method = list(GBnod - BGnod) ) #planned comparison between T173-1022 and 1022-T173 treatments
+
+
+T173presentnod<-c(0,1,0,1,1,1,0,1,0)
+T173absentnod<-c(1,0,1,0,0,0,1,0,1)
+contrast(emm1, method = list(T173presentnod - T173absentnod) ) #do treatments with T173 make more nodules than treatments that do not have it?
+```
+Boxplot graph
+```{r}
+levels(d3$T2_strain)
+levels(d3$T1_strain) <- c("Control", "T173", "1022")
+levels(d3$T2_strain) <- c("Control", "T173", "1022")
+d3$Treatment<-factor(d3$Treatment, levels=c("NN", "NB", "NG", "BN", "BB", "BG", "GB", "GN", "GG"))
+nodnumbox2<-ggplot(data=d3, aes(x=T2_strain, y=Total_nod_num, fill=Treatment))+
+  geom_boxplot()+
+  facet_grid(.~ T1_strain, space = 'free_x', scales = 'free_x', switch = 'x') +
+  labs(x = "First inoculation")+
+  theme_cowplot()
+nodnumbox2labelled<-nodnumbox2+ xlab('Treatment') + ylab('Nodules (no.)') +theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+scale_fill_manual(values=c("white", "white", "white","white", "white", "grey","grey", "white", "white"))+ theme(legend.position="none") 
+nodnumbox2labelled
+ggsave2("nodulenumbox2.png", nodnumbox2labelled, dpi=600, width=7, height=4)
+```
+
+# Looking at proportion of nodules that are nitrogen fixing
+Old Models
+```{r}
+NODSIMPLE <- ddply(d3, c("Treatment"), summarise,
+               N    = sum(!is.na(Proportion_pink)),
+               mean = mean(Proportion_pink, na.rm=TRUE),
+               sd   = sd(Proportion_pink, na.rm=TRUE),
+               se   = sd / sqrt(N))
+NODSIMPLE
+
+hist(d3$White_nod_num)
+hist(log1p(d3$White_nod_num))
+hist(d3$Pink_nod_num)
+hist(log1p(d3$Pink_nod_num))
+
+model11<-manova(cbind(log1p(White_nod_num), log1p(Pink_nod_num)) ~ T1_strain*T2_strain, data = d3)
+summary(model11)#MANOVA F, df, p come from here
+summary.aov(model11)
+model11$coefficients
+str(model11)
+
+model11.2<-lm(log1p(Pink_nod_num)~T1_strain*T2_strain, data=d) 
+summary(model11.2)#Effective nodule estimates and error come from here
+Anova(model11.2, type=3)#Effective nodule F, df, and p come from here
+model11.2$coefficients
+
+model11.3<-lm(log1p(White_nod_num)~T1_strain*T2_strain, data=d) 
+summary(model11.3) #Ineffective nodule estimates and error come from here
+Anova(model11.3, type=3) #Ineffective nodule F, df, and p come from here
+model11.3$coefficients
+```
+New model for nodule occupancy
+```{r}
+model11.review3<-glm(cbind(Pink_nod_num, Total_nod_num)~T1_strain*T2_strain, family="quasibinomial", weights=Total_nod_num, data=d3)
+summary(model11.review3)
+Anova(model11.review3, type=3)#all significant
+plot(model11.review3)
+
+emm2.3 = emmeans(model11.review3, specs = ~ T1_strain & T2_strain)
+emm2.3
+GBPinknum<-c(0,0,0,0,0,1,0,0,0)
+BGPinknum<-c(0,0,0,0,0,0,0,1,0)
+contrast(emm2.3, method = list(BGPinknum - GBPinknum)) #planned comparison between 1022-T173 and T173-1022 treatments for number of pink nodules. This is the one now displayed on figure
+
+lsmeans(model11.review3, list(pairwise ~ T2_strain | T1_strain), type="unlink") #back-transformed
+lsmeans(model11.review3, list(pairwise ~ T2_strain | T1_strain))
+```
+Boxplot graph
+```{r}
+levels(d3$T2_strain)
+levels(d3$T1_strain) <- c("Control", "T173", "1022")
+levels(d3$T2_strain) <- c("Control", "T173", "1022")
+d3$Treatment<-factor(d3$Treatment, levels=c("NN", "NB", "NG", "BN", "BB", "BG", "GB", "GN", "GG"))
+proportionbox2<-ggplot(data=d3, aes(x=T2_strain, y=Proportion_pink, fill=Treatment))+
+  geom_boxplot()+
+  facet_grid(.~ T1_strain, space = 'free_x', scales = 'free_x', switch = 'x') +
+  labs(x = "First inoculation")+
+  theme_cowplot()
+proportionbox2labelled<-proportionbox2+ xlab('Treatment') + ylab('Proportion of nitrogen-fixing nodules') +theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+scale_fill_manual(values=c("white", "white", "white","white", "white", "grey","grey", "white", "white"))+ theme(legend.position="none") 
+proportionbox2labelled
+ggsave2("proportionbox2.png", proportionbox2labelled, dpi=600, width=7, height=5)
+```
+# Above biomass
+Model
+```{r}
+BiomassTreat <- ddply(d3, c("Treatment"), summarise,
+               N    = sum(!is.na(Above_biomass)),
+               mean = mean(Above_biomass, na.rm=TRUE),
+               sd   = sd(Above_biomass, na.rm=TRUE),
+               se   = sd / sqrt(N))
+BiomassTreat
+
+model5.3<- glmer(Above_biomass~T1_strain*T2_strain + (1 | Block), family=Gamma, data=d3)  
+summary(model5.3) 
+Anova(model5.3, type=3) #t1 strain sig
+plot(model5.3)
+
+lsmeans(model5.3, list(pairwise ~ T2_strain | T1_strain)) #this gives lsmean in the transformed way, 'inverse'
+lsmeans(model5.3, ~ T2_strain | T1_strain, type = "unlink") #this gives me untransformed 
+
+emm3 = emmeans(model5.3, specs = ~ T1_strain & T2_strain)
+emm3
+GBagb<-c(0,0,0,0,0,1,0,0,0)
+BGagb<-c(0,0,0,0,0,0,0,1,0)
+contrast(emm3, method = list(GBagb - BGagb)) #planned comparison between 1022-T173 and T173-1022 treatments
+```
+Boxplot graph
+```{r}
+levels(d3$T2_strain)
+levels(d3$T1_strain) <- c("Control", "T173", "1022")
+levels(d3$T2_strain) <- c("Control", "T173", "1022")
+d3$Treatment<-factor(d3$Treatment, levels=c("NN", "NB", "NG", "BN", "BB", "BG", "GB", "GN", "GG"))
+agbbox<- d3 %>% 
+  filter(Above_biomass<0.05) %>% 
+  ggplot(aes(x=T2_strain, y=Above_biomass, fill=Treatment))+
+  geom_boxplot()+
+  facet_grid(.~ T1_strain, space = 'free_x', scales = 'free_x', switch = 'x') +
+  labs(x = "First inoculation")+
+  theme_cowplot()
+agbboxlabelled<-agbbox+ xlab('Treatment') + ylab('Aboveground biomass (g)') +theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+scale_fill_manual(values=c("white", "white", "white","white", "white", "grey","grey", "white", "white"))+ theme(legend.position="none") 
+agbboxlabelled
+ggsave2("agbbox.png", agbboxlabelled, dpi=600, width=7, height=5)
+```
+
+# Supplementary
+## Nodule colour on biomass: plots
+Number of nodules
+```{r}
+#How do white nodules predict biomass
+WHITENODBIO<-ggplot(data=d3, aes(x=White_nod_num, y=Above_biomass))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  theme_cowplot()#Negative slope, more white nodules decreases biomass
+WHITENODBIOFINAL<-WHITENODBIO+ xlab('Number of ineffective nodules (no.)') + ylab('Aboveground biomass (g)')
+WHITENODBIOFINAL
+#ggsave2("WhiteNoduleBiomass.png",WHITENODBIOFINAL, dpi=600)
+modelsup1<- lm(Above_biomass~White_nod_num, data=d3) 
+summary(modelsup1)
+Anova(modelsup1, type=3)
+
+#Let's see how well number of nitrogen fixing nodules predicts biomass
+PINKNODBIO<-ggplot(data=d3, aes(x=Pink_nod_num, y=Above_biomass))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  theme_cowplot()#Positive slope, more pink nodules increases biomass
+PINKNODBIOFINAL<-PINKNODBIO+ xlab('Number of nitrogen-fixing nodules (no.)') + ylab('Aboveground biomass (g)')
+PINKNODBIOFINAL
+modelsup2<- lm(Above_biomass~Pink_nod_num, data=d3) 
+summary(modelsup2)
+Anova(modelsup2, type=3)
+
+ggsave2("PinkNoduleBiomass.png",PINKNODBIOFINAL, dpi=600)
+ggsave2("WhiteNoduleBiomass.png",WHITENODBIOFINAL, dpi=600)
+```
+Proportion of nodules
+```{r}
+ProportionAGB<-ggplot(data=d3, aes(x=Proportion_pink, y=Above_biomass))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  theme_cowplot()
+ProportionAGBlabelled<-ProportionAGB+ xlab('Proportion of nitrogen-fixing nodules') + ylab('Aboveground biomass (g)')
+ProportionAGBlabelled
+ggsave2("ProportionAGBsup.png", ProportionAGBlabelled, dpi=600)
+
+modelsup3<-glm(Above_biomass~cbind(Pink_nod_num, Total_nod_num), family=Gamma, weights=Total_nod_num, data=d3)
+summary(modelsup3)
+Anova(modelsup3, type=3)
+
+```
+## Model and plot for first strain and nodule number effect on biomass
+```{r}
+model7.1<-glmer(Above_biomass~Total_nod_num*T1_strain + (1 | Block), family=Gamma, data=d3) 
+summary(model7.1) 
+Anova(model7.1, type=3) #T1_strain marginally significant, total nod num sig
+plot(model7.1) 
+
+#How this looks visually:
+BiomassNodNum<-ggplot(data=d3, aes(x=Total_nod_num, y=Above_biomass, colour=T1_strain))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  scale_color_manual(values=c('#3182BD','#DE2D26', '#2CA25F'), labels=c("Control", "T173", "1022"))+
+  theme_cowplot()
+BiomassNodNumFinal<-BiomassNodNum +xlab('Total number of nodules (no.)') + ylab('Aboveground biomass (g)') +labs(colour='First inoculation') 
+BiomassNodNumFinal 
+ggsave2("BiomassNoduleNumber.png", BiomassNodNumFinal, dpi=600)
+```
+## Leaf data and Treatment: Plot and model
+```{r}
+LEAFTREAT1 <- ddply(d3, c("Treatment"), summarise,
+               N    = sum(!is.na(Leaf1)),
+               mean = mean(Leaf1, na.rm=TRUE),
+               sd   = sd(Leaf1, na.rm=TRUE),
+               se   = sd / sqrt(N))
+LEAFTREAT1
+LEAFTREAT2 <- ddply(d3, c("Treatment"), summarise,
+               N    = sum(!is.na(Leaf2)),
+               mean = mean(Leaf2, na.rm=TRUE),
+               sd   = sd(Leaf2, na.rm=TRUE),
+               se   = sd / sqrt(N))
+LEAFTREAT2
+LEAFTREAT3 <- ddply(d3, c("Treatment"), summarise,
+               N    = sum(!is.na(Leaf3)),
+               mean = mean(Leaf3, na.rm=TRUE),
+               sd   = sd(Leaf3, na.rm=TRUE),
+               se   = sd / sqrt(N))
+LEAFTREAT3
+LEAFTREAT4 <- ddply(d3, c("Treatment"), summarise,
+               N    = sum(!is.na(Leaf4)),
+               mean = mean(Leaf4, na.rm=TRUE),
+               sd   = sd(Leaf4, na.rm=TRUE),
+               se   = sd / sqrt(N))
+LEAFTREAT4 #all these summarized dataframes went into making the LeafTime.csv file
+
+LeafTimePlot<-LeafTime %>% 
+  group_by(Treatment, Time) %>% 
+  ggplot(aes(x=Time, y=MeanLeaf, colour=Treatment))+
+  geom_point(size=3, position=position_dodge(width=4))+
+  geom_errorbar(aes(ymin=MeanLeaf-SELeaf, ymax=MeanLeaf+SELeaf), width=.1, position=position_dodge(width=4))+
+  geom_line(position=position_dodge(width=4))+
+  scale_color_manual(name = 'Treatment', values=c('#66C2A4','#2CA25F', '#006D2C', '#6BAED6', '#3182BD', '#08519C', '#A50F15', '#DE2D26', '#FB6A4A'))+
+  theme_cowplot()
+LeafTimePlotFinal<-LeafTimePlot+ xlab('Days since germination')+ylab('Leaves (no.)')+ geom_segment(aes(x=14, xend=14, y=0, yend=5), linetype=2) + annotate("text", x = 10, y = 5.2, label = "First inoculation", size=4)+ geom_segment(aes(x=28, xend=28, y=0, yend=5), linetype=2) + annotate("text", x = 33, y = 5.2, label = "Second inoculation", size=4)
+LeafTimePlotFinal
+#ggsave2("LeafTimePlotFinal.png",LeafTimePlotFinal, dpi=600)
+
+model3<- lmer(Leaf4~T1_strain*T2_strain + (1 | Block), data=d4)#Using the dataframe that excludes plants that were dead after first survey
+summary(model3)
+Anova(model3, type=3) #only interaction stays sig
+plot(model3)#normal
+```
+## Herbivory/Senescent leaves model
+```{r}
+model10<- manova(cbind(Leaf4, Leaf4attached) ~ T1_strain*T2_strain, data = d3) #T1_strain is significant
+summary(model10)
+summary.aov(model10)
+```
